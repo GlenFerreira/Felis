@@ -1,0 +1,14 @@
+# Fotos recebidas (não subir)
+backend/fotos/*
+!backend/fotos/.gitkeep
+
+# Ambientes virtuais e dependências
+backend/venv/
+node_modules/
+__pycache__/
+*.pyc
+
+# Arquivos de IDE e SO
+.vscode/
+Thumbs.db
+.DS_Store

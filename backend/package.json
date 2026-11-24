@@ -1,0 +1,13 @@
+{
+  "name": "felis-backend",
+  "version": "1.0.0",
+  "description": "Backend simples em Node.js para receber fotos do ESP32-CAM",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test:upload": "node teste_upload.js"
+  },
+  "keywords": ["esp32-cam", "alimentador", "felis"],
+  "author": "",
+  "license": "ISC"
+}
