@@ -1,6 +1,8 @@
 @echo off
-title Servidor Node.js - Alimentador Felis
+title Servidor Felis API (Node.js + PostgreSQL + MinIO)
 cd /d "%~dp0backend"
-echo Iniciando servidor Node.js...
+echo ============================================================
+echo   🐱 SERVIDOR FELIS API (ESP32 + POSTGRESQL + MINIO)
+echo ============================================================
 node server.js
 pause

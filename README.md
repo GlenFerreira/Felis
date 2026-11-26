@@ -1,191 +1,208 @@
-# 🐱 Felis - Alimentador Inteligente com ESP32-CAM & Backend Local
+# 🐱 Felis - Ecossistema Completo: ESP32-CAM, Backend API & Aplicativo Expo
 
-Sistema automatizado de monitoramento e alimentação para gatos. Utiliza o microcontrolador **ESP32-CAM** acoplado a **duas células de carga (HX711)** para monitorar em tempo real o peso das tigelas de **Ração** e **Água**. Quando é detectada uma diminuição estável de peso (indicando que o gato comeu ou bebeu), o ESP32 captura uma foto e a envia via HTTP POST para um servidor local em **Node.js**, onde as imagens são salvas para posterior análise com Inteligência Artificial.
+Sistema completo e automatizado de monitoramento e cuidados felinos. 
+
+O projeto é composto por três frentes totalmente integradas:
+1. **Hardware (ESP32-CAM + HX711):** Monitora em tempo real o peso das tigelas de ração e água, detecta consumo com filtro anti-ruído e envia fotos das refeições.
+2. **Backend API (Node.js + PostgreSQL + MinIO na VPS):** Centraliza a lógica de negócios, autenticação JWT, CRUD de gatos e uploads de fotos para a nuvem.
+3. **Aplicativo Mobile (Expo / React Native):** Interface moderna para o tutor criar conta, cadastrar seus gatos com fotos reais, acompanhar idade calculada automaticamente, peso, status de castração e histórico.
 
 ---
 
 ## 📑 Sumário
 1. [Visão Geral da Arquitetura](#-1-visão-geral-da-arquitetura)
-2. [Pinagem e Ligações Elétricas](#-2-pinagem-e-ligações-elétricas)
-   - [Tabela de Pinos do ESP32-CAM](#tabela-de-pinos-do-esp32-cam)
-   - [Ligação das Células de Carga no Módulo HX711](#ligação-das-células-de-carga-no-módulo-hx711)
-   - [Avisos Críticos de Hardware (Pinos Proibidos)](#avisos-críticos-de-hardware-pinos-proibidos)
-3. [Lógica e Funcionamento do Firmware (ESP32)](#-3-lógica-e-funcionamento-do-firmware-esp32)
-   - [Inicialização Universal da Câmera](#inicialização-universal-da-câmera)
-   - [Algoritmo de Detecção de Peso e Anti-Ruído](#algoritmo-de-detecção-de-peso-e-anti-ruído)
-4. [Backend Local (Node.js)](#-4-backend-local-nodejs)
-   - [Como Iniciar o Servidor](#como-iniciar-o-servidor)
+2. [Banco de Dados (PostgreSQL) & Armazenamento (MinIO na VPS)](#-2-banco-de-dados-postgresql--armazenamento-minio-na-vps)
+3. [Aplicativo Mobile em Expo](#-3-aplicativo-mobile-em-expo)
+   - [Funcionalidades do App](#funcionalidades-do-app)
+   - [Como Rodar o Aplicativo](#como-rodar-o-aplicativo)
+4. [Backend API (Node.js)](#-4-backend-api-nodejs)
    - [Endpoints da API](#endpoints-da-api)
-   - [Formato das Fotos Salvas](#formato-das-fotos-salvas)
-5. [Estrutura de Pastas do Projeto](#-5-estrutura-de-pastas-do-projeto)
-6. [Próximos Passos (Roadmap)](#-6-próximos-passos-roadmap)
+   - [Como Iniciar o Servidor](#como-iniciar-o-servidor)
+5. [Hardware (ESP32-CAM & HX711)](#-5-hardware-esp32-cam--hx711)
+   - [Pinagem e Ligações](#pinagem-e-ligações)
+6. [Estrutura de Pastas do Projeto](#-6-estrutura-de-pastas-do-projeto)
 
 ---
 
 ## 🏛️ 1. Visão Geral da Arquitetura
 
 ```text
-  [ Célula de Carga - Ração ] ──> [ Módulo HX711 ] ──┐ (DT: GPIO 13)
-                                                    ├─> [ ESP32-CAM AI-Thinker ]
-  [ Célula de Carga - Água  ] ──> [ Módulo HX711 ] ──┘ (DT: GPIO 15, SCK: GPIO 14)
-                                                               │
-                                                       (Wi-Fi / HTTP POST)
-                                                               │
-                                                               ▼
-                                                  [ Backend Local Node.js ]
-                                                  (Porta 5000: /upload)
-                                                               │
-                                                               ▼
-                                                   [ Pasta /backend/fotos ]
-                                                (20261124_021100_racao.jpg)
+ ┌──────────────────────┐             ┌─────────────────────────────┐
+ │  ESP32-CAM (OV2640)  │             │   App Mobile (Expo / RN)    │
+ │  2x Balanças HX711   │             │  - Cadastro e Login         │
+ │  Ração & Água        │             │  - Ficha dos Gatos          │
+ └──────────┬───────────┘             │  - Upload de Fotos (Câmera) │
+            │                         └──────────────┬──────────────┘
+    (HTTP POST /upload)                              │ (REST API / JWT)
+            │                                        │
+            ▼                                        ▼
+ ┌──────────────────────────────────────────────────────────────────┐
+ │                     Backend API (Node.js / Express)              │
+ │                     Porta 5000 (0.0.0.0 / Rede Local)            │
+ └───────────────────┬──────────────────────────┬───────────────────┘
+                     │                          │
+           (Conexão PostgreSQL)           (API S3 / Upload)
+                     │                          │
+                     ▼                          ▼
+       ┌───────────────────────────┐  ┌───────────────────────────┐
+       │   PostgreSQL (VPS Nuvem)  │  │   MinIO Bucket (VPS Nuvem)│
+       │   Tabelas: usuarios,      │  │   Bucket: "felis"         │
+       │   gatos, eventos          │  │   Fotos dos gatos e pets  │
+       │   IP: 62.171.175.197:5432 │  │   IP: 62.171.175.197:9090 │
+       └───────────────────────────┘  └───────────────────────────┘
 ```
 
 ---
 
-## 🔌 2. Pinagem e Ligações Elétricas
+## ☁️ 2. Banco de Dados (PostgreSQL) & Armazenamento (MinIO na VPS)
 
-### Tabela de Pinos do ESP32-CAM
-Como as fotos são enviadas via Wi-Fi, o leitor de cartão MicroSD da placa não é utilizado, liberando os pinos do barramento SD com segurança.
+As informações dos usuários e gatinhos ficam seguras e persistidas diretamente na sua VPS:
 
-> **💡 Otimização de Pinos:** O sinal de clock (**SCK**) é **compartilhado** entre os dois módulos HX711, economizando pinos I/O do ESP32.
+### PostgreSQL
+* **Host:** `62.171.175.197:5432`
+* **Banco:** `postgres`
+* **Tabelas Criadas:**
+  - `usuarios`: ID, nome, e-mail (único), senha criptografada (`bcrypt`) e data de cadastro.
+  - `gatos`: ID, vínculo com usuário (`usuario_id`), nome, sexo, data de nascimento, peso atual, raça, cor, status de castração, URL da foto no MinIO e observações.
+  - `eventos_alimentador`: histórico das fotos capturadas pelo ESP32 com peso consumido e gatilho.
 
-| Pino no ESP32-CAM | Conexão de Hardware | Função / Descrição |
-| :--- | :--- | :--- |
-| **GPIO 14** | **SCK / CLK** (de ambos os módulos HX711) | Linha de Clock compartilhada |
-| **GPIO 13** | **DT / DOUT** (Módulo HX711 Ração) | Leitura digital da balança de ração |
-| **GPIO 15** | **DT / DOUT** (Módulo HX711 Água) | Leitura digital da balança de água |
-| **5V** | **VCC** (Entrada de alimentação e HX711) | Alimentação principal (mínimo 1A a 2A) |
-| **GND** | **GND** (Terra comum de todo o circuito) | Referência de 0V obrigatória entre ESP e sensores |
-
----
-
-### Ligação das Células de Carga no Módulo HX711
-A maioria das células de carga possui 4 fios (ponte de Wheatstone). Conecte-os nos bornes do **Canal A** de cada HX711:
-
-| Cor do Fio da Célula | Borne no HX711 | Função |
-| :--- | :--- | :--- |
-| **Vermelho** | **E+** (ou EXC+) | Excitação positiva (alimentação da ponte) |
-| **Preto** | **E-** (ou EXC-) | Excitação negativa (terra da ponte) |
-| **Branco** | **A-** | Sinal diferencial negativo |
-| **Verde** | **A+** | Sinal diferencial positivo |
-
-> **Nota sobre calibração de sinal:** O código já implementa o fator com sinal invertido (`-1000.0`), garantindo que colocar peso gere números positivos e retirar peso gere diminuição.
+### MinIO (Armazenamento de Fotos na Nuvem)
+* **Endpoint:** `http://62.171.175.197:9090`
+* **Bucket:** `felis` (com política de leitura pública ativada).
+* Todas as fotos tiradas com a câmera do celular no aplicativo ou selecionadas da galeria são enviadas diretamente para `http://62.171.175.197:9090/felis/gatos/...`.
 
 ---
 
-### ⚠️ Avisos Críticos de Hardware (Pinos Proibidos)
+## 📱 3. Aplicativo Mobile em Expo
 
-* 🚫 **GPIO 16 (NUNCA UTILIZAR):** É conectado internamente ao pino de seleção de chip (CS) da memória PSRAM. Conectar qualquer sensor nele corrompe a memória e gera *boot loop* instantâneo.
-* 🚫 **GPIO 12:** Strapping pin MTDI. Se estiver em nível ALTO durante o boot, comuta a tensão da memória Flash para 1.8V e a placa não inicializa.
-* 🚫 **GPIO 4:** Conectado ao Flash LED frontal de alta potência.
-* 🚫 **GPIO 0:** Usado para o clock principal da câmera (XCLK de 20 MHz) e modo de gravação via FTDI.
-* 🚫 **GPIO 1 e 3:** Portas seriais UART0 (TX/RX) mantidas livres para monitoramento serial a 115200 baud.
+O aplicativo foi desenvolvido com **Expo (React Native)** e possui uma interface moderna com tema pet profissional.
 
----
+### Funcionalidades do App
+* 🔐 **Autenticação Completa:**
+  - Criar conta (Nome, E-mail e Senha).
+  - Login seguro com token JWT persistido de forma criptografada no `expo-secure-store` (compatível com Keychain do iOS e Keystore do Android).
+* 🐱 **Cadastro e Perfil dos Gatos:**
+  - **Foto de Perfil:** Tira foto com a câmera do celular na hora ou escolhe da galeria (`expo-image-picker`), com conversão em Base64 e upload direto para o MinIO na VPS.
+  - **Nome** do pet.
+  - **Sexo:** Seleção visual rápida (Macho / Fêmea).
+  - **Data de Nascimento:** Cálculo automático da idade em tempo real (ex: *"1 ano e 4 meses"*, *"8 meses"*).
+  - **Peso Atual:** Em kg.
+  - **Raça e Cor:** Sugestões e campo livre.
+  - **Castrado:** Interruptor Switch (Sim / Não).
+  - **Observações:** Espaço para anotações de vacinas, temperamento e cuidados especiais.
+* 🚨 **Monitoramento de Saúde e Detecção de Anomalias:**
+  - **Alerta Inteligente de Desvio de Rotina:** Identifica automaticamente comportamentos anormais (ex: gato acostumado a beber água 2 a 3x ao dia que fica 48h sem ingestão hídrica).
+  - **Card de Risco Clínico:** Explicações claras sobre os perigos da desidratação felina e recomendações veterinárias imediatas.
+  - **Badge de Alerta no App:** Marcador vermelho com exclamação na aba e no card do gatinho.
+* 📊 **Gráficos Comparativos de Ingestão (Últimos 7 dias):**
+  - Gráficos interativos para **Água (ml)** e **Ração (g)** com **Linha de Meta Diária (Baseline)**.
+  - Colunas com cores inteligentes: verde esmeralda para dias dentro da rotina, laranja para consumo baixo e vermelho para anomalias críticas.
+  - Toque em qualquer coluna do gráfico para abrir a ficha daquele dia.
+  - **Simulador de Cenários:** Alternador entre o cenário de anomalia (alerta ativo) e o cenário de rotina 100% normal.
+* ⏱️ **Timeline Cronológica de Alimentação:**
+  - Linha do tempo visual vertical conectada por nós e horários.
+  - Métricas de cada visita: quantidade consumida (-18g, -45ml) e duração da permanência no comedouro.
+  - Miniatura e modal de foto ampliada capturada pelo ESP32-CAM.
+  - Filtros rápidos: `Todos`, `Água 💧`, `Ração 🍲`, `Anomalias ⚠️`.
+* 📱 **Navegação por Abas Inferiores (Bottom Tabs):**
+  - Navegação rápida entre **Meus Pets**, **Relatórios** e **Timeline**.
 
-## 🧠 3. Lógica e Funcionamento do Firmware (ESP32)
+### Como Rodar o Aplicativo
 
-### Inicialização Universal da Câmera
-Muitos lotes de ESP32-CAM vêm de fábrica com sensores que não possuem codificador JPEG embutido por hardware (gerando o erro `0x106 - ESP_ERR_NOT_SUPPORTED`). O firmware implementa uma **estratégia universal**:
-1. Tenta inicializar em modo JPEG nativo de hardware.
-2. Se o sensor rejeitar (`0x106`), ativa automaticamente o modo `PIXFORMAT_RGB565`.
-3. Na hora da transmissão, utiliza a biblioteca oficial `img_converters.h` (`frame2jpg`) para comprimir o quadro via software em menos de 40ms, aproveitando a memória PSRAM.
-
-### Algoritmo de Detecção de Peso e Anti-Ruído
-Para evitar disparos falsos causados por ruídos elétricos do ADC ou trepidações mecânicas:
-* **Média de 5 Amostras:** Cada leitura faz uma média de 5 medições antes de registrar o valor.
-* **Auto-Reabastecimento:** Se o peso aumentar além do limiar (ex: quando você abastece o pote com ração ou água), a nova referência é atualizada automaticamente **sem disparar foto**.
-* **Confirmação Dupla:** A queda de peso precisa se manter estável por **2 ciclos consecutivos** para ser considerada legítima.
-* **Cooldown de 10 Segundos:** Após bater uma foto, o sensor entra em pausa de 10 segundos, evitando fotos em excesso enquanto o gato ainda está no local.
-
----
-
-## 💻 4. Backend Local (Node.js)
-
-O backend foi desenvolvido utilizando estritamente os **módulos nativos do Node.js** (`http`, `fs`, `path`). Isso significa que ele **não necessita de `npm install`** e não possui dependências pesadas de terceiros.
-
-### Como Iniciar o Servidor
-
-#### Opção A (Via Atalho):
-Dê dois cliques no arquivo:
+#### Passo 1: Inicie o Backend
+Dê dois cliques em:
 ```
 iniciar_backend.bat
 ```
 
-#### Opção B (Via Terminal):
-```bash
-cd backend
-node server.js
+#### Passo 2: Inicie o Aplicativo Expo
+Dê dois cliques em:
 ```
+iniciar_app.bat
+```
+*(Ou pelo terminal: `cd mobile` e depois `npx expo start`).*
 
-O servidor escuta na porta **5000** em todas as interfaces da rede local (`0.0.0.0:5000`).
+#### Passo 3: Abrir no Celular ou Emulador
+* **No Celular (Recomendado):** Instale o aplicativo **Expo Go** (disponível na Google Play Store e Apple App Store) e aponte a câmera para o **QR Code** exibido no terminal.
+* **Na Web:** Pressione `w` no terminal para abrir no navegador.
 
 ---
+
+## 📡 4. Backend API (Node.js)
+
+O backend em `backend/server.js` atua como a ponte central conectando o ESP32-CAM, o aplicativo Expo, o banco PostgreSQL e o bucket MinIO.
 
 ### Endpoints da API
 
-#### `GET /`
-* Endpoint de teste e ping de conectividade.
-* Quando o ESP32 liga, ele acessa essa rota e o console exibe em verde:
-  ```text
-  [02:10:35] 🟢 CONEXÃO DETECTADA!
-     -> Origem: ESP32-CAM no IP: 192.168.0.178
-     -> Status: Comunicação com o Backend confirmada com sucesso!
-  ```
-
-#### `POST /upload`
-* Recebe os bytes brutos da imagem JPEG enviada pelo ESP32-CAM.
-* Lê os cabeçalhos HTTP customizados:
-  - `X-Trigger`: Tipo do gatilho (`racao`, `agua` ou `boot_teste`).
-  - `X-Weight-Delta`: Quantidade em gramas/ml consumida.
-  - `X-ESP-IP`: IP local do ESP32 na rede.
-* Salva a imagem diretamente na pasta `backend/fotos/`.
+| Método | Rota | Descrição |
+| :--- | :--- | :--- |
+| `GET` | `/` | Status da API e estatísticas de gatos cadastrados |
+| `POST` | `/upload` | Recebe fotos JPEG do **ESP32-CAM** e registra evento de consumo |
+| `POST` | `/api/auth/register` | Cadastra novo usuário com senha criptografada (`bcrypt`) |
+| `POST` | `/api/auth/login` | Autentica o usuário e retorna o token JWT |
+| `GET` | `/api/auth/me` | Retorna o perfil do usuário logado |
+| `GET` | `/api/cats` | Lista todos os gatos do usuário logado |
+| `POST` | `/api/cats` | Cadastra um novo gato |
+| `PUT` | `/api/cats/:id` | Atualiza as informações de um gato existente |
+| `DELETE` | `/api/cats/:id` | Remove um gato do sistema |
+| `POST` | `/api/upload-foto` | Recebe foto do app móvel e sobe para o MinIO na VPS |
+| `GET` | `/api/feed-events` | Histórico dos últimos consumos registrados pelo ESP32 |
 
 ---
 
-### Formato das Fotos Salvas
-As imagens são gravadas com timestamp completo e identificação de origem:
-```
-backend/fotos/AAAAMMDD_HHMMSS_<origem>.jpg
-```
-*Exemplos gerados em operação real:*
-- `20261124_021038_boot_teste.jpg` (24 KB - Foto de teste de boot)
-- `20261124_021100_racao.jpg` (38 KB - Foto disparada por consumo de comida)
-- `20261124_021140_racao.jpg` (19 KB - Foto de novo consumo)
+## 🔌 5. Hardware (ESP32-CAM & HX711)
+
+### Pinagem e Ligações
+* **GPIO 14:** Pino **SCK (Clock)** compartilhado para ambos os módulos HX711.
+* **GPIO 13:** Pino **DT / DOUT** do HX711 da Ração.
+* **GPIO 15:** Pino **DT / DOUT** do HX711 da Água.
+* **5V:** Alimentação principal (ligada no 5V do ESP32-CAM).
+* **GND:** Terra comum obrigatório.
+
+### Célula de Carga no HX711
+* **Vermelho:** E+ (Excitação +)
+* **Preto:** E- (Excitação -)
+* **Branco:** A- (Sinal -)
+* **Verde:** A+ (Sinal +)
 
 ---
 
-## 📁 5. Estrutura de Pastas do Projeto
+## 📁 6. Estrutura de Pastas do Projeto
 
 ```text
 Felis/
 ├── backend/
-│   ├── fotos/                 # Pasta onde as fotos recebidas são gravadas
-│   ├── server.js              # Servidor HTTP nativo em Node.js (Porta 5000)
-│   ├── package.json           # Manifesto do projeto Node.js
-│   └── teste_upload.js        # Script utilitário para simular envio de imagem
+│   ├── .env                   # Credenciais da VPS (PostgreSQL e MinIO)
+│   ├── db.js                  # Pool de conexão PostgreSQL
+│   ├── minioClient.js         # Cliente MinIO S3 (Upload e políticas)
+│   ├── server.js              # Servidor API Express (Porta 5000)
+│   ├── fotos/                 # Backup local das fotos do ESP32
+│   └── package.json           # Dependências da API
+│
+├── mobile/
+│   ├── App.js                 # Ponto de entrada do aplicativo Expo
+│   ├── app.json               # Configurações do Expo
+│   ├── package.json           # Dependências React Native
+│   └── src/
+│       ├── context/
+│       │   └── AuthContext.js # Contexto de autenticação e sessão JWT
+│       ├── services/
+│       │   └── api.js         # Conexão HTTP REST e upload multipart
+│       ├── screens/
+│       │   ├── AuthScreen.js  # Tela de Login e Criação de Conta
+│       │   └── HomeScreen.js  # Dashboard principal com lista de gatos
+│       ├── components/
+│       │   ├── CatFormModal.js    # Modal com câmera/galeria e formulário
+│       │   └── CatDetailsModal.js # Ficha técnica completa do gato
+│       └── utils/
+│           └── helpers.js     # Cálculo de idade e máscaras de data
 │
 ├── esp/
-│   ├── esp.ino                # Código-fonte principal do ESP32-CAM
-│   ├── board_config.h         # Seleção do modelo AI-Thinker
-│   ├── camera_pins.h          # Mapeamento oficial dos pinos da câmera
-│   ├── app_httpd.cpp          # Funções complementares do driver de vídeo
-│   ├── camera_index.h         # Página HTML padrão do driver (legado)
-│   └── partitions.csv         # Tabela de partições de memória Flash
+│   ├── esp.ino                # Firmware universal do ESP32-CAM
+│   ├── board_config.h         # Configuração AI-Thinker
+│   └── camera_pins.h          # Mapeamento de registradores da câmera
 │
-├── iniciar_backend.bat        # Atalho de 1 clique para iniciar o servidor Node
+├── iniciar_backend.bat        # Atalho de 1 clique para iniciar o Backend API
+├── iniciar_app.bat            # Atalho de 1 clique para iniciar o App Expo
 └── README.md                  # Documentação completa do projeto
 ```
-
----
-
-## 🔮 6. Próximos Passos (Roadmap)
-
-- [ ] **Integração de Modelo de IA (Visão Computacional):**
-  - Implementar pipeline em Python (YOLO / OpenCV / MobileNet) no backend para ler as fotos salvas e confirmar a presença e identificação do gato.
-- [ ] **Banco de Dados (SQLite / PostgreSQL):**
-  - Registrar histórico de consumo (hora exata, quantidade consumida em gramas/ml, link da foto).
-- [ ] **Deploy na Nuvem (VPS):**
-  - Configurar proxy reverso (Nginx + Certbot HTTPS) na VPS para envio remoto das fotos.
-- [ ] **Dashboard Web / Notificações no Telegram/WhatsApp:**
-  - Enviar alerta com a foto do pet toda vez que ele se alimentar.
